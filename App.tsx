@@ -7,6 +7,8 @@ import Sidebar from './components/Sidebar';
 import StoryDisplay from './components/StoryDisplay';
 import ChoiceButtons from './components/ChoiceButtons';
 
+const SAVE_KEY = 'GEMINI_ADVENTURE_SAVE';
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
     status: GameStatus.INIT,
@@ -19,6 +21,13 @@ const App: React.FC = () => {
     error: null,
   });
   const [currentAudio, setCurrentAudio] = useState<AudioBufferSourceNode | null>(null);
+  const [hasSaveFile, setHasSaveFile] = useState(false);
+
+  useEffect(() => {
+    // Check for existing save on mount
+    const savedData = localStorage.getItem(SAVE_KEY);
+    setHasSaveFile(!!savedData);
+  }, []);
 
   const stopCurrentAudio = useCallback(() => {
     if (currentAudio) {
@@ -26,6 +35,31 @@ const App: React.FC = () => {
       setCurrentAudio(null);
     }
   }, [currentAudio]);
+
+  const handleSaveGame = useCallback(() => {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(gameState));
+      setHasSaveFile(true);
+      // Optional: Visual feedback could go here, but button state is enough for now
+    } catch (error) {
+      console.error("Failed to save game:", error);
+      alert("Failed to save game. Storage might be full.");
+    }
+  }, [gameState]);
+
+  const handleLoadGame = useCallback(() => {
+    try {
+      const savedData = localStorage.getItem(SAVE_KEY);
+      if (savedData) {
+        stopCurrentAudio();
+        const loadedState = JSON.parse(savedData);
+        setGameState(loadedState);
+      }
+    } catch (error) {
+      console.error("Failed to load game:", error);
+      alert("Failed to load save file.");
+    }
+  }, [stopCurrentAudio]);
 
   const handleNewAdventure = useCallback(async (prompt: string) => {
     stopCurrentAudio();
@@ -71,8 +105,12 @@ const App: React.FC = () => {
   }, [gameState.inventory, gameState.quest, stopCurrentAudio]);
 
   useEffect(() => {
-    // Start the game on initial load
-    handleNewAdventure("You awaken in a cold, damp cell in the Whispering Dungeons. A rusty key and some stale bread are in your pocket. Your quest is to escape. Describe the scene and your immediate options.");
+    // Only start a new game if we are in INIT state and haven't loaded a game
+    // This allows the initial load to work, but prevents overwriting a loaded game
+    // We check if story is empty as a proxy for "fresh start"
+    if (gameState.status === GameStatus.INIT && !gameState.story) {
+        handleNewAdventure("You awaken in a cold, damp cell in the Whispering Dungeons. A rusty key and some stale bread are in your pocket. Your quest is to escape. Describe the scene and your immediate options.");
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -113,6 +151,9 @@ const App: React.FC = () => {
         inventory={gameState.inventory}
         quest={gameState.quest}
         className="w-full lg:w-1/3 p-4 md:p-8"
+        onSave={handleSaveGame}
+        onLoad={handleLoadGame}
+        hasSave={hasSaveFile}
       />
     </div>
   );
