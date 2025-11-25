@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { StoryResponse } from "../types";
-import { decode, decodeAudioData } from "../utils/audioUtils";
+import { decode } from "../utils/audioUtils";
 
 const API_KEY = process.env.API_KEY;
 if (!API_KEY) {
@@ -39,13 +39,32 @@ const storySchema = {
     updatedQuest: {
       type: Type.STRING,
       description: "The player's current main quest, updated if the story progresses it."
+    },
+    ambiance: {
+      type: Type.STRING,
+      enum: ['DUNGEON', 'NATURE', 'BATTLE', 'TOWN', 'MYSTICAL'],
+      description: "The ambient sound environment that matches the current scene."
+    },
+    weather: {
+      type: Type.STRING,
+      enum: ['CLEAR', 'RAIN', 'STORM', 'WINDY', 'FOG'],
+      description: "The current weather condition. Change this dynamically based on the story or random events."
     }
   },
-  required: ['story', 'imagePrompt', 'choices', 'updatedInventory', 'updatedQuest']
+  required: ['story', 'imagePrompt', 'choices', 'updatedInventory', 'updatedQuest', 'ambiance', 'weather']
 };
 
-export const generateStoryAndChoices = async (prompt: string, inventory: string[], quest: string): Promise<StoryResponse> => {
-  const systemInstruction = `You are the dungeon master for an infinite choose-your-own-adventure text-based game. Your responses MUST be in JSON format matching the provided schema. The story should be immersive, creative, and adapt to the user's choices. Always update the inventory and quest based on what happens in the story. Keep the art style consistent for images. Current inventory: [${inventory.join(', ')}]. Current quest: "${quest}".`;
+export const generateStoryAndChoices = async (prompt: string, inventory: string[], quest: string, currentWeather: string): Promise<StoryResponse> => {
+  const systemInstruction = `You are the dungeon master for an infinite choose-your-own-adventure text-based game. 
+  Your responses MUST be in JSON format matching the provided schema. 
+  The story should be immersive, creative, and adapt to the user's choices. 
+  Always update the inventory and quest based on what happens in the story. 
+  Keep the art style consistent for images. 
+  Select the most appropriate 'ambiance' for the soundscape.
+  You also control the 'weather'. It should affect the story (e.g., making travel harder, changing the mood). Weather types: CLEAR, RAIN, STORM, WINDY, FOG.
+  Current inventory: [${inventory.join(', ')}]. 
+  Current quest: "${quest}".
+  Current weather: "${currentWeather}".`;
 
   try {
     const response = await ai.models.generateContent({
@@ -92,7 +111,7 @@ export const generateImage = async (prompt: string): Promise<string> => {
     }
 };
 
-export const generateSpeech = async (text: string): Promise<AudioBufferSourceNode> => {
+export const generateSpeech = async (text: string): Promise<Uint8Array> => {
     try {
         const response = await ai.models.generateContent({
             model: ttsModel,
@@ -112,15 +131,7 @@ export const generateSpeech = async (text: string): Promise<AudioBufferSourceNod
             throw new Error("No audio data received from API.");
         }
         
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        const decodedBytes = decode(base64Audio);
-        const audioBuffer = await decodeAudioData(decodedBytes, audioContext, 24000, 1);
-        
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-
-        return source;
+        return decode(base64Audio);
 
     } catch (error) {
         console.error("Error generating speech:", error);

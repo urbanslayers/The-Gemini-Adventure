@@ -1,13 +1,14 @@
-
-import React, { useState, useEffect, useCallback } from 'react';
-import { GameState, GameStatus } from './types';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { GameState, GameStatus, WeatherType } from './types';
 import { generateStoryAndChoices, generateImage, generateSpeech } from './services/geminiService';
-import { playAudio } from './utils/audioUtils';
+import { decodeAudioData } from './utils/audioUtils';
+import { ambianceService } from './services/ambianceService';
 import Sidebar from './components/Sidebar';
 import StoryDisplay from './components/StoryDisplay';
 import ChoiceButtons from './components/ChoiceButtons';
 
 const SAVE_KEY = 'GEMINI_ADVENTURE_SAVE';
+const WEATHER_TYPES: WeatherType[] = ['CLEAR', 'RAIN', 'STORM', 'WINDY', 'FOG'];
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
@@ -19,28 +20,95 @@ const App: React.FC = () => {
     inventory: ['A rusty key', 'A piece of stale bread'],
     quest: 'Find your way out of the Whispering Dungeons.',
     error: null,
+    ambiance: 'DUNGEON',
+    weather: 'CLEAR',
   });
-  const [currentAudio, setCurrentAudio] = useState<AudioBufferSourceNode | null>(null);
+  
+  // Audio State
+  const narratorContext = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [hasSaveFile, setHasSaveFile] = useState(false);
 
   useEffect(() => {
+    // Initialize AudioContext singleton for narrator
+    narratorContext.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    
     // Check for existing save on mount
     const savedData = localStorage.getItem(SAVE_KEY);
     setHasSaveFile(!!savedData);
+
+    return () => {
+        if (narratorContext.current) narratorContext.current.close();
+    };
   }, []);
 
-  const stopCurrentAudio = useCallback(() => {
-    if (currentAudio) {
-      currentAudio.stop();
-      setCurrentAudio(null);
+  // Sync ambiance with game state
+  useEffect(() => {
+    if (gameState.status === GameStatus.PLAYING) {
+        ambianceService.setAmbiance(gameState.ambiance, gameState.weather);
     }
-  }, [currentAudio]);
+  }, [gameState.ambiance, gameState.weather, gameState.status]);
+
+  const stopCurrentAudio = useCallback(() => {
+    if (audioSourceRef.current) {
+        try { audioSourceRef.current.stop(); } catch(e) {}
+        audioSourceRef.current = null;
+    }
+    setIsPlaying(false);
+    // Do not clear buffer here, so user can restart it
+  }, []);
+
+  const playSpeechBuffer = useCallback(async (buffer: AudioBuffer) => {
+    if (!narratorContext.current) return;
+    
+    // Resume context if suspended
+    if (narratorContext.current.state === 'suspended') {
+        await narratorContext.current.resume();
+    }
+
+    stopCurrentAudio(); // Stop any existing source
+
+    const source = narratorContext.current.createBufferSource();
+    source.buffer = buffer;
+    source.connect(narratorContext.current.destination);
+    source.onended = () => setIsPlaying(false);
+    source.start();
+    
+    audioSourceRef.current = source;
+    setIsPlaying(true);
+  }, [stopCurrentAudio]);
+
+  const handlePlayPause = useCallback(async () => {
+    if (!narratorContext.current) return;
+
+    if (isPlaying) {
+        // Pause by suspending context
+        await narratorContext.current.suspend();
+        setIsPlaying(false);
+    } else {
+        // Resume or Start
+        if (narratorContext.current.state === 'suspended') {
+            await narratorContext.current.resume();
+            setIsPlaying(true);
+        } else if (audioBuffer) {
+            // If stopped (not suspended), we need to recreate source
+            playSpeechBuffer(audioBuffer);
+        }
+    }
+  }, [isPlaying, audioBuffer, playSpeechBuffer]);
+
+  const handleStop = useCallback(() => {
+     stopCurrentAudio();
+     // If we stop, we might want to reset the context time or just rely on recreating the source
+     // Recreating the source (via playSpeechBuffer logic in handlePlayPause) handles the "restart" behavior
+  }, [stopCurrentAudio]);
 
   const handleSaveGame = useCallback(() => {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(gameState));
       setHasSaveFile(true);
-      // Optional: Visual feedback could go here, but button state is enough for now
     } catch (error) {
       console.error("Failed to save game:", error);
       alert("Failed to save game. Storage might be full.");
@@ -52,7 +120,10 @@ const App: React.FC = () => {
       const savedData = localStorage.getItem(SAVE_KEY);
       if (savedData) {
         stopCurrentAudio();
+        setAudioBuffer(null); // Clear audio on load
         const loadedState = JSON.parse(savedData);
+        if (!loadedState.ambiance) loadedState.ambiance = 'DUNGEON';
+        if (!loadedState.weather) loadedState.weather = 'CLEAR';
         setGameState(loadedState);
       }
     } catch (error) {
@@ -63,10 +134,11 @@ const App: React.FC = () => {
 
   const handleNewAdventure = useCallback(async (prompt: string) => {
     stopCurrentAudio();
+    setAudioBuffer(null);
     setGameState(prev => ({ ...prev, status: GameStatus.LOADING, story: '', imageUrl: '', choices: [], error: null }));
 
     try {
-      const storyResponse = await generateStoryAndChoices(prompt, gameState.inventory, gameState.quest);
+      const storyResponse = await generateStoryAndChoices(prompt, gameState.inventory, gameState.quest, gameState.weather);
       
       setGameState(prev => ({
         ...prev,
@@ -76,6 +148,8 @@ const App: React.FC = () => {
         inventory: storyResponse.updatedInventory,
         quest: storyResponse.updatedQuest,
         imagePrompt: storyResponse.imagePrompt,
+        ambiance: storyResponse.ambiance || 'DUNGEON',
+        weather: storyResponse.weather || 'CLEAR',
       }));
 
       // Fire off image and audio generation in parallel
@@ -86,12 +160,15 @@ const App: React.FC = () => {
         setGameState(prev => ({ ...prev, error: 'Failed to generate image.' }));
       });
       
-      generateSpeech(storyResponse.story).then(audioSource => {
-        setCurrentAudio(audioSource);
-        playAudio(audioSource);
+      generateSpeech(storyResponse.story).then(async (rawAudioData) => {
+         if (narratorContext.current) {
+            const buffer = await decodeAudioData(rawAudioData, narratorContext.current, 24000, 1);
+            setAudioBuffer(buffer);
+            playSpeechBuffer(buffer);
+         }
       }).catch(err => {
         console.error("Speech generation failed:", err);
-         setGameState(prev => ({ ...prev, error: 'Failed to generate audio narration.' }));
+        // Silent fail for audio is okay
       });
 
     } catch (error) {
@@ -102,12 +179,9 @@ const App: React.FC = () => {
         error: 'A mysterious force has blocked your path. Please try again.',
       }));
     }
-  }, [gameState.inventory, gameState.quest, stopCurrentAudio]);
+  }, [gameState.inventory, gameState.quest, gameState.weather, stopCurrentAudio, playSpeechBuffer]);
 
   useEffect(() => {
-    // Only start a new game if we are in INIT state and haven't loaded a game
-    // This allows the initial load to work, but prevents overwriting a loaded game
-    // We check if story is empty as a proxy for "fresh start"
     if (gameState.status === GameStatus.INIT && !gameState.story) {
         handleNewAdventure("You awaken in a cold, damp cell in the Whispering Dungeons. A rusty key and some stale bread are in your pocket. Your quest is to escape. Describe the scene and your immediate options.");
     }
@@ -115,7 +189,17 @@ const App: React.FC = () => {
   }, []);
 
   const onChoiceSelected = (choice: string) => {
-    const prompt = `My last action was: "${choice}". The story so far is: "${gameState.story}". My current inventory is [${gameState.inventory.join(', ')}] and my quest is "${gameState.quest}". Continue the story based on my choice.`;
+    ambianceService.playSFX('SELECT');
+    
+    let weatherChangePrompt = "";
+    // 10% chance to change weather dynamically
+    if (Math.random() < 0.1) {
+      const possibleWeathers = WEATHER_TYPES.filter(w => w !== gameState.weather);
+      const newWeather = possibleWeathers[Math.floor(Math.random() * possibleWeathers.length)];
+      weatherChangePrompt = ` Suddenly, the weather conditions shift drastically to ${newWeather}. Describe how this change in weather affects the immediate environment.`;
+    }
+
+    const prompt = `My last action was: "${choice}". The story so far is: "${gameState.story}". My current inventory is [${gameState.inventory.join(', ')}]. My quest is "${gameState.quest}". The weather is currently "${gameState.weather}".${weatherChangePrompt} Continue the story based on my choice.`;
     handleNewAdventure(prompt);
   };
 
@@ -128,6 +212,11 @@ const App: React.FC = () => {
             imageUrl={gameState.imageUrl}
             story={gameState.story}
             status={gameState.status}
+            isPlaying={isPlaying}
+            onPlayPause={handlePlayPause}
+            onStop={handleStop}
+            hasAudio={!!audioBuffer}
+            weather={gameState.weather}
           />
           <ChoiceButtons
             choices={gameState.choices}
@@ -150,6 +239,7 @@ const App: React.FC = () => {
       <Sidebar
         inventory={gameState.inventory}
         quest={gameState.quest}
+        weather={gameState.weather}
         className="w-full lg:w-1/3 p-4 md:p-8"
         onSave={handleSaveGame}
         onLoad={handleLoadGame}

@@ -6,6 +6,10 @@ export enum GameStatus {
   ERROR = 'ERROR',
 }
 
+export type AmbianceType = 'DUNGEON' | 'NATURE' | 'BATTLE' | 'TOWN' | 'MYSTICAL';
+
+export type WeatherType = 'CLEAR' | 'RAIN' | 'STORM' | 'WINDY' | 'FOG';
+
 export interface GameState {
   status: GameStatus;
   story: string;
@@ -15,6 +19,8 @@ export interface GameState {
   inventory: string[];
   quest: string;
   error: string | null;
+  ambiance: AmbianceType;
+  weather: WeatherType;
 }
 
 export interface StoryResponse {
@@ -23,4 +29,6 @@ export interface StoryResponse {
   choices: string[];
   updatedInventory: string[];
   updatedQuest: string;
+  ambiance: AmbianceType;
+  weather: WeatherType;
 }

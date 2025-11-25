@@ -1,20 +1,66 @@
 
 import React from 'react';
-import { BackpackIcon, QuestIcon, SaveIcon, LoadIcon } from './IconComponents';
+import { BackpackIcon, QuestIcon, SaveIcon, LoadIcon, SunIcon, RainIcon, StormIcon, WindIcon, CloudIcon } from './IconComponents';
+import { WeatherType } from '../types';
 
 interface SidebarProps {
   inventory: string[];
   quest: string;
+  weather?: WeatherType;
   className?: string;
   onSave: () => void;
   onLoad: () => void;
   hasSave: boolean;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ inventory, quest, className, onSave, onLoad, hasSave }) => {
+const WeatherDisplay: React.FC<{ weather: WeatherType }> = ({ weather }) => {
+    let Icon = SunIcon;
+    let text = "Clear Skies";
+    let color = "text-yellow-400";
+
+    switch (weather) {
+        case 'RAIN':
+            Icon = RainIcon;
+            text = "Rainy";
+            color = "text-blue-400";
+            break;
+        case 'STORM':
+            Icon = StormIcon;
+            text = "Stormy";
+            color = "text-purple-400";
+            break;
+        case 'WINDY':
+            Icon = WindIcon;
+            text = "Windy";
+            color = "text-gray-300";
+            break;
+        case 'FOG':
+            Icon = CloudIcon;
+            text = "Foggy";
+            color = "text-gray-400";
+            break;
+        case 'CLEAR':
+        default:
+            Icon = SunIcon;
+            text = "Clear";
+            color = "text-yellow-400";
+            break;
+    }
+
+    return (
+        <div className="flex items-center space-x-3 text-brand-text-muted">
+             <Icon className={`w-6 h-6 ${color}`} />
+             <span className="font-medium">{text}</span>
+        </div>
+    );
+};
+
+const Sidebar: React.FC<SidebarProps> = ({ inventory, quest, weather = 'CLEAR', className, onSave, onLoad, hasSave }) => {
   return (
     <aside className={`flex-shrink-0 ${className}`}>
       <div className="sticky top-8 bg-brand-surface rounded-lg shadow-2xl p-6 space-y-8">
+        
+        {/* Inventory */}
         <div>
           <h2 className="text-2xl font-bold mb-4 flex items-center font-serif text-brand-secondary">
             <BackpackIcon className="w-6 h-6 mr-3" />
@@ -32,6 +78,8 @@ const Sidebar: React.FC<SidebarProps> = ({ inventory, quest, className, onSave, 
             )}
           </ul>
         </div>
+
+        {/* Quest */}
         <div>
           <h2 className="text-2xl font-bold mb-4 flex items-center font-serif text-brand-secondary">
             <QuestIcon className="w-6 h-6 mr-3" />
@@ -42,6 +90,17 @@ const Sidebar: React.FC<SidebarProps> = ({ inventory, quest, className, onSave, 
           </p>
         </div>
 
+        {/* Weather Conditions */}
+        <div>
+           <h2 className="text-2xl font-bold mb-4 flex items-center font-serif text-brand-secondary">
+            Conditions
+          </h2>
+          <div className="pl-4 border-l-2 border-brand-primary">
+            <WeatherDisplay weather={weather} />
+          </div>
+        </div>
+
+        {/* Controls */}
         <div className="pt-6 border-t border-brand-primary/30">
           <h2 className="text-xl font-bold mb-4 flex items-center font-serif text-brand-secondary">
             Game Controls
