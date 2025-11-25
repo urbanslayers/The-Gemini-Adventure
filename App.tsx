@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameState, GameStatus, WeatherType } from './types';
 import { generateStoryAndChoices, generateImage, generateSpeech } from './services/geminiService';
@@ -30,6 +31,9 @@ const App: React.FC = () => {
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [hasSaveFile, setHasSaveFile] = useState(false);
+  
+  // Easter Egg State
+  const [isBarrelRolling, setIsBarrelRolling] = useState(false);
 
   useEffect(() => {
     // Initialize AudioContext singleton for narrator
@@ -132,10 +136,38 @@ const App: React.FC = () => {
     }
   }, [stopCurrentAudio]);
 
-  const handleNewAdventure = useCallback(async (prompt: string) => {
+  const handleNewAdventure = useCallback(async (prompt: string, overrideState?: Partial<GameState>) => {
     stopCurrentAudio();
     setAudioBuffer(null);
     setGameState(prev => ({ ...prev, status: GameStatus.LOADING, story: '', imageUrl: '', choices: [], error: null }));
+
+    // Easter Egg Bypass
+    if (overrideState) {
+        setTimeout(() => {
+            setGameState(prev => ({
+                ...prev,
+                status: GameStatus.PLAYING,
+                choices: ["Praise the Duck", "Pet the Duck", "Ask for wisdom"],
+                ...overrideState
+            }));
+            
+            if (overrideState.imagePrompt) {
+                generateImage(overrideState.imagePrompt).then(newImageUrl => {
+                    setGameState(prev => ({...prev, imageUrl: newImageUrl }));
+                }).catch(console.error);
+            }
+            if (overrideState.story) {
+                generateSpeech(overrideState.story).then(async (rawAudioData) => {
+                    if (narratorContext.current) {
+                        const buffer = await decodeAudioData(rawAudioData, narratorContext.current, 24000, 1);
+                        setAudioBuffer(buffer);
+                        playSpeechBuffer(buffer);
+                    }
+                }).catch(console.error);
+            }
+        }, 1500); // Fake delay for dramatic effect
+        return;
+    }
 
     try {
       const storyResponse = await generateStoryAndChoices(prompt, gameState.inventory, gameState.quest, gameState.weather);
@@ -191,6 +223,22 @@ const App: React.FC = () => {
   const onChoiceSelected = (choice: string) => {
     ambianceService.playSFX('SELECT');
     
+    // Easter Egg Check
+    if (choice.trim().toLowerCase() === "summon rubber duck") {
+        setIsBarrelRolling(true);
+        setTimeout(() => setIsBarrelRolling(false), 2000); // Reset after animation
+        
+        handleNewAdventure("", {
+            story: "You whisper the ancient, rubbery incantation. The very fabric of reality warps and twists! Clouds part to reveal a colossal, squeaky deity: The Cosmic Rubber Duck. It descends from the heavens, staring into your soul with benign, plastic eyes. You have summoned the Eternal Quack.",
+            quest: "Bask in the glory of the Eternal Quack.",
+            inventory: [...gameState.inventory, "Golden Squeaker"],
+            ambiance: "MYSTICAL",
+            weather: "CLEAR",
+            imagePrompt: "A giant majestic yellow rubber duck floating in the sky, epic fantasy style, hyper-realistic, Ghibli style, cinematic lighting, wide shot"
+        });
+        return;
+    }
+
     let weatherChangePrompt = "";
     // 10% chance to change weather dynamically
     if (Math.random() < 0.1) {
@@ -204,7 +252,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-brand-bg flex flex-col lg:flex-row font-sans">
+    <div className={`min-h-screen bg-brand-bg flex flex-col lg:flex-row font-sans transition-transform duration-1000 ${isBarrelRolling ? 'animate-barrel-roll' : ''}`}>
       <main className="w-full lg:w-2/3 p-4 md:p-8 flex flex-col">
         <h1 className="text-3xl md:text-4xl font-bold text-center mb-6 font-serif text-brand-secondary">Gemini Adventure Engine</h1>
         <div className="flex-grow flex flex-col bg-brand-surface rounded-lg shadow-2xl overflow-hidden">
